@@ -1,19 +1,22 @@
 #include "main.h"
+#include "lemlib/chassis/chassis.hpp"
+#include "lemlib/chassis/trackingWheel.hpp"
+#include "pros/misc.h"
 
 /**
- * A callback function for LLEMU's center button.
+ * A callback function f3or LLEMU's center button.
  *
  * When this callback is fired, it will toggle line 2 of the LCD text between
  * "I was pressed!" and nothing.
  */
 void on_center_button() {
-	static bool pressed = false;
-	pressed = !pressed;
-	if (pressed) {
-		pros::lcd::set_text(2, "I was pressed!");
-	} else {
-		pros::lcd::clear_line(2);
-	}
+  static bool pressed = false;
+  pressed = !pressed;
+  if (pressed) {
+    pros::lcd::set_text(2, "I was pressed!");
+  } else {
+    pros::lcd::clear_line(2);
+  }
 }
 
 /**
@@ -23,10 +26,10 @@ void on_center_button() {
  * to keep execution time for this mode under a few seconds.
  */
 void initialize() {
-	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Hello PROS User!");
+  pros::lcd::initialize();
+  pros::lcd::set_text(1, "Hello PROS User!");
 
-	pros::lcd::register_btn1_cb(on_center_button);
+  pros::lcd::register_btn1_cb(on_center_button);
 }
 
 /**
@@ -73,22 +76,65 @@ void autonomous() {}
  * operator control task will be stopped. Re-enabling the robot will restart the
  * task, not resume it from where it left off.
  */
+pros::MotorGroup leftSide({1, 2, 3});
+pros::MotorGroup rightSide({4, 5, 6});
+lemlib::Drivetrain drivetrain(
+    &leftSide,  // left motor group
+    &rightSide, // right motor group
+    10,         // 10 inch track width
+    lemlib::Omniwheel::NEW_275,
+    300, // drivetrain rpm is 360
+    8 // horizontal drift is 2. If we had traction wheels, it would have been 8
+);
+
+lemlib::OdomSensors
+    sensors(nullptr, // Vertical tracking wheel 1
+            nullptr, // Vertical tracking wheel 2
+            nullptr, // Horizontal tracking wheel 1
+            nullptr, // Horizontal tracking wheel 2
+            nullptr  // Inertial sensor (strongly recommended for turns)
+    );
+lemlib::ControllerSettings
+    lateral_controller(10.0, // Proportional gain (kP)
+                       0.0,  // Integral gain (kI)
+                       1.0,  // Derivative gain (kD)
+                       3.0,  // Anti-windup
+                       1.0,  // Small error range (inches)
+                       100,  // Small error timeout (ms)
+                       3.0,  // Large error range (inches)
+                       500,  // Large error timeout (ms)
+                       20.0  // Maximum acceleration (slew rate)
+    );
+
+lemlib::ControllerSettings
+    angular_controller(2.0,  // Proportional gain (kP)
+                       0.0,  // Integral gain (kI)
+                       10.0, // Derivative gain (kD)
+                       3.0,  // Anti-windup
+                       1.0,  // Small error range (degrees)
+                       100,  // Small error timeout (ms)
+                       3.0,  // Large error range (degrees)
+                       500,  // Large error timeout (ms)
+                       0.0   // Maximum acceleration (slew rate)
+    );
+lemlib::Chassis chassis(drivetrain, lateral_controller, angular_controller,
+                        sensors);
 void opcontrol() {
-	pros::Controller master(pros::E_CONTROLLER_MASTER);
-	pros::MotorGroup left_mg({1, -2, 3});    // Creates a motor group with forwards ports 1 & 3 and reversed port 2
-	pros::MotorGroup right_mg({-4, 5, -6});  // Creates a motor group with forwards port 5 and reversed ports 4 & 6
+  pros::Controller master(pros::E_CONTROLLER_MASTER);
+  while (true) {
+    pros::lcd::print(0, "%d %d %d",
+                     (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
+                     (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
+                     (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >>
+                         0); // Prints status of the emulated screen LCDs
 
-
-	while (true) {
-		pros::lcd::print(0, "%d %d %d", (pros::lcd::read_buttons() & LCD_BTN_LEFT) >> 2,
-		                 (pros::lcd::read_buttons() & LCD_BTN_CENTER) >> 1,
-		                 (pros::lcd::read_buttons() & LCD_BTN_RIGHT) >> 0);  // Prints status of the emulated screen LCDs
-
-		// Arcade control scheme
-		int dir = master.get_analog(ANALOG_LEFT_Y);    // Gets amount forward/backward from left joystick
-		int turn = master.get_analog(ANALOG_RIGHT_X);  // Gets the turn left/right from right joystick
-		left_mg.move(dir - turn);                      // Sets left motor voltage
-		right_mg.move(dir + turn);                     // Sets right motor voltage
-		pros::delay(20);                               // Run for 20 ms then update
-	}
+    // Arcade control scheme
+    int throttle = master.get_analog(
+        pros::E_CONTROLLER_ANALOG_LEFT_Y); // Gets amount forward/backward from
+                                           // left joystick
+    int turning = master.get_analog(
+        pros::E_CONTROLLER_ANALOG_RIGHT_X); // Gets the turn left/right from
+                                            // right joystick
+    chassis.arcade(throttle, turning);
+  }
 }
